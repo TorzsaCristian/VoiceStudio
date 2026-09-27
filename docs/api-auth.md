@@ -18,8 +18,26 @@ env var that exempts trusted callers:
 | **API key** | `OMNIVOICE_API_KEY` env var on the backend | direct clients and first-party session bootstrap | non-loopback **HTTP + WebSocket** |
 | **Trusted networks** | `OMNIVOICE_TRUSTED_NETWORKS` env var | *exempts* the two gates above | non-loopback **consumption** routes only |
 
-Loopback traffic (`127.0.0.1`, `::1`, `localhost`) is **never** gated — local
-tools keep working unchanged whichever gate is set.
+Loopback traffic (`127.0.0.1`, `::1`, `localhost`) is **never** gated by a
+credential — local tools keep working unchanged whichever gate is set.
+
+Loopback trust is withheld from **browser pages that are not VoiceStudio**, so a
+website open while the app runs cannot drive the API:
+
+- **Host check (DNS rebinding).** A loopback request's `Host` must be
+  `localhost`, `127.0.0.1`, `[::1]`, a `*.localhost` name or a `*.ts.net`
+  (Tailscale Serve) name. A reverse proxy that forwards from loopback under
+  another name must be listed in `OMNIVOICE_ALLOWED_HOSTS` (comma-separated;
+  `*.example.com` matches subdomains). Entries in `OMNIVOICE_MCP_ALLOWED_HOSTS`
+  are accepted too.
+- **Origin check (cross-site requests).** A loopback request carrying an
+  `Origin` must match `OMNIVOICE_ALLOWED_ORIGINS` (default: the desktop app and
+  the dev UI) or its own host; `Origin: null` never matches. A request without
+  `Origin` that the browser marks `Sec-Fetch-Site: cross-site` is refused.
+
+Scripts, CLIs, MCP agents and the desktop app send neither header and are
+unaffected. A refused request gets `403 {"detail": "browser origin rejected"}`
+(WebSockets close with **1008**).
 
 > VoiceStudio separates **consumption** (TTS, dictation, voices) from
 > **administration** (`/system/*`, `/api/settings/*` — RCE-class). The PIN and

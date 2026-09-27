@@ -140,3 +140,86 @@ def cookie_csrf_allowed(connection, *, side_effectful_get: bool = False) -> bool
         fetch_site = headers.get("sec-fetch-site", "") if hasattr(headers, "get") else ""
         return fetch_site == "same-origin"
     return True
+
+
+# ── Loopback browser guard (DNS rebinding + cross-site requests) ────────────
+#
+# Loopback peers are fully trusted (auth.py), which is right for the desktop
+# shell, CLIs, MCP agents and the native helper — none of them is a browser.
+# A web page in the user's browser is ALSO a loopback peer, though, so two
+# browser-only facts must be checked before that trust applies:
+#
+#  * Host — a DNS-rebinding page reaches 127.0.0.1 under its own hostname.
+#    Loopback names, `*.localhost` (browsers pin it to loopback) and `*.ts.net`
+#    (Tailscale Serve forwards from 127.0.0.1; the name only resolves inside
+#    the tailnet) are accepted; anything else must be listed in
+#    OMNIVOICE_ALLOWED_HOSTS (or the MCP host allowlist, which it extends).
+#  * Origin / Sec-Fetch-Site — a cross-site page can still send blind "simple"
+#    requests (form POST, <img> GET, WebSocket). A request carrying an Origin
+#    must match `origin_allowed`; one without Origin must not be marked
+#    cross-site by the browser. Non-browser clients send neither header.
+
+_LOOPBACK_HOST_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+_BUILTIN_HOST_SUFFIXES = (".localhost", ".ts.net")
+
+
+def _host_name(value: str | None) -> str | None:
+    """Hostname of a ``Host`` header / allowlist entry, or None if malformed."""
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        parsed = urlsplit(f"//{value}")
+        parsed.port  # noqa: B018 — raises on a malformed port
+    except (TypeError, ValueError):
+        return None
+    if parsed.username is not None or parsed.password is not None or parsed.path:
+        return None
+    return parsed.hostname.lower().rstrip(".") if parsed.hostname else None
+
+
+def _configured_hosts() -> tuple[frozenset[str], tuple[str, ...]]:
+    names: set[str] = set()
+    suffixes: list[str] = []
+    for env in ("OMNIVOICE_ALLOWED_HOSTS", "OMNIVOICE_MCP_ALLOWED_HOSTS"):
+        for entry in os.environ.get(env, "").split(","):
+            entry = entry.strip().lower()
+            # MCP SDK patterns use "host:*" for any port.
+            if entry.endswith(":*"):
+                entry = entry[:-2]
+            if entry.startswith("*.") and len(entry) > 2:
+                suffixes.append(entry[1:])
+            elif (name := _host_name(entry)) is not None:
+                names.add(name)
+    return frozenset(names), tuple(suffixes)
+
+
+def loopback_host_allowed(connection) -> bool:
+    headers = getattr(connection, "headers", None) or {}
+    raw = headers.get("host", "") if hasattr(headers, "get") else ""
+    if not (raw or "").strip():
+        # Browsers always send Host, so a request without one is not a
+        # rebinding page (HTTP/1.0 tools, raw ASGI callers).
+        return True
+    host = _host_name(raw)
+    if host is None:
+        return False
+    if host in _LOOPBACK_HOST_NAMES:
+        return True
+    names, suffixes = _configured_hosts()
+    if host in names:
+        return True
+    return any(host.endswith(suffix) for suffix in _BUILTIN_HOST_SUFFIXES + suffixes)
+
+
+def loopback_browser_request_allowed(connection) -> bool:
+    """Whether a loopback-peer request is safe to grant loopback trust."""
+    if not loopback_host_allowed(connection):
+        return False
+    headers = getattr(connection, "headers", None) or {}
+    if not hasattr(headers, "get"):
+        return True
+    if headers.get("origin") is not None:
+        # Includes "null" (sandboxed iframes, file: pages), which never matches.
+        return origin_allowed(connection)
+    return headers.get("sec-fetch-site", "").strip().lower() != "cross-site"

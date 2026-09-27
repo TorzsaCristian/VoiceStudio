@@ -121,6 +121,7 @@ Add `-- --install` for the networked managed-runtime installation check.
 | Need | Start here |
 |---|---|
 | Setup help | [Troubleshooting](docs/install/troubleshooting.md) · [Model downloads](docs/downloading-models.md) |
+| Privacy & security | [Private and secure setup](docs/private-setup.md) · [API authentication](docs/api-auth.md) |
 | Models & audio quality | [Engine guides](docs/engines/README.md) · [Benchmarks](docs/benchmarks.md) |
 | Integrations | [Local API](docs/speech-platform.md) · [MCP](docs/mcp.md) · [Examples](examples/README.md) |
 | Development | [Contributing](.github/CONTRIBUTING.md) · [Electron](electron/README.md) · [Changelog](CHANGELOG.md) |

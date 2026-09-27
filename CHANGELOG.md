@@ -52,11 +52,13 @@ metadata and the backend fallback mirror it.
 
 ### Docs
 
+- New private and secure setup guide: locked installs, local-only defaults and what uses the network — thanks @TorzsaCristian!
 - New call agent guide covering setup, disclosure, recording consent and safeguards (#2306)
 - The Twilio guide and integration directory describe the guided setup and in-app integration pages (#2304)
 
 ### Fixed
 
+- Websites open in your browser can no longer control the local backend through cross-site requests or DNS rebinding — thanks @TorzsaCristian!
 - macOS development launches use the maintained Electron version and icon paths (#2351)
 - Electron detects and repairs incomplete PyTorch, torchaudio and torchvision runtime wheels before backend startup (#2354) — thanks @jonathanmoronta1-lab!
 - Returning to local mode discards sessions from unsaved remote-backend connection tests (#2356)

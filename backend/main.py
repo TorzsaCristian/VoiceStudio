@@ -383,10 +383,16 @@ from core.auth import (
     PrincipalKind,
     credential_matches,
     is_local_host,
+    is_loopback,
     principal_for,
     remote_api_key,
 )
-from core.csrf import SAFE_HTTP_METHODS, cookie_csrf_allowed, origin_allowed
+from core.csrf import (
+    SAFE_HTTP_METHODS,
+    cookie_csrf_allowed,
+    loopback_browser_request_allowed,
+    origin_allowed,
+)
 
 # The 30-router fan-out (`from api.routers import (...)`) is the widest —
 # and, because dub_core/dub_generate/system import torch at module level,
@@ -1767,6 +1773,38 @@ class BearerKeyMiddleware:
         return await self.app(scope, receive, send)
 
 
+class LoopbackBrowserGuardMiddleware:
+    """Refuse loopback trust to browser pages that are not the app itself.
+
+    Loopback peers need no credential (core/auth.py), so without this gate any
+    website open in the user's browser could drive the API: blind cross-site
+    POSTs / WebSockets (e.g. ``/system/network/enable`` opening a 0.0.0.0
+    listener) and, via DNS rebinding, full read access. See
+    ``core.csrf.loopback_browser_request_allowed`` for the policy. Non-browser
+    loopback clients (desktop shell proxy, CLIs, MCP agents, native helper)
+    send no Origin / cross-site marker and are unaffected. Pure ASGI.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] not in ("http", "websocket"):
+            return await self.app(scope, receive, send)
+        client = scope.get("client")
+        if not is_loopback(client[0] if client else None):
+            return await self.app(scope, receive, send)
+        from starlette.requests import HTTPConnection
+
+        if loopback_browser_request_allowed(HTTPConnection(scope)):
+            return await self.app(scope, receive, send)
+        if scope["type"] == "websocket":
+            await receive()  # consume websocket.connect
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        resp = JSONResponse({"detail": "browser origin rejected"}, status_code=403)
+        return await resp(scope, receive, send)
+
 # UI dev-server port — single-sourced from OMNIVOICE_UI_PORT so a user who
 # moves the Vite dev server off 3901 still gets a matching CORS allow-list.
 def _ui_port() -> int:
@@ -1824,6 +1862,9 @@ app.add_middleware(
 # every response. CORS is immediately inside it and outside both auth gates, so
 # preflights and gate-generated 401s retain the browser contract. The marker's
 # absence lets a client conclude that the responder is not VoiceStudio (#1385).
+# The loopback browser guard sits just inside the marker, outside CORS: a
+# foreign page's preflight is refused before any route or gate runs.
+app.add_middleware(LoopbackBrowserGuardMiddleware)
 app.add_middleware(BackendMarkerMiddleware)
 
 # Register canonical audio MIME types before any StaticFiles mount.

@@ -54,6 +54,11 @@ os.environ["OMNIVOICE_MODEL"] = "test"
 # shell must not re-enable it; a test that wants the warm-up monkeypatches.
 os.environ["OMNIVOICE_PRELOAD_WATERMARK"] = "0"
 
+# TestClient / httpx.ASGITransport address the app as "testserver" / "test" /
+# "t" / "voice.test". Loopback-peer tests would otherwise hit the DNS-rebinding Host guard
+# (core.csrf.loopback_host_allowed); tests of that guard monkeypatch this.
+os.environ.setdefault("OMNIVOICE_ALLOWED_HOSTS", "testserver,test,t,voice.test")
+
 
 # ── Test fixtures ──────────────────────────────────────────────────────────
 
